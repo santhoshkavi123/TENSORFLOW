@@ -19,28 +19,9 @@ from sklearn.model_selection import train_test_split
 
 
 eeg_data = pd.read_pickle("../data/processed/eeg_processed.pkl")
+eeg_data.reset_index(drop = True, inplace = True)
 eeg_data["shape"] = eeg_data["epoch_data"].apply(lambda x : x.shape)
 eeg_data = eeg_data[eeg_data["shape"]!=(64, 0)]
-eeg_data.head()
-
-
-X = eeg_data.drop(["label", "label_description"], axis = 1) # Features 
-y = eeg_data[["label", "label_description"]] # Target Column
-
-stratify_by = eeg_data[["label_description"]]
-
-# Perform the stratified train-test split
-X_train, X_test, y_train, y_test = train_test_split(
-        X, y, 
-        test_size = 0.3, 
-        random_state = 42, 
-        stratify= stratify_by
-)
- 
-print(f"Shape of X_train : {X_train.shape}")
-print(f"Shape of X_test : {X_test.shape}")
-print(f"Shape of y_train : {y_train.shape}")
-print(f"Shape of y_test : {y_test.shape}")
 
 
 # Define constants once
@@ -53,7 +34,7 @@ SFREQ = 160
 CH_TYPES = ["eeg"] * 64
 
 
-
+print("============= Started: Working on Normalization .....==============")
 def zscore_normalization(eeg_data:np.array) -> np.array:
     """
         EEG Data : numpy array of shape (n_channels, n_samples)
@@ -63,10 +44,12 @@ def zscore_normalization(eeg_data:np.array) -> np.array:
     std = np.std(eeg_data, axis = 1, keepdims=True)
     return (eeg_data - mean)/std
 
+eeg_data["epoch_data_normalized"] = eeg_data["epoch_data"].apply(zscore_normalization)
+print("============= Done: Working on Normalization .....==============")
 
-X_train["epoch_data_normalized"] = X_train["epoch_data"].apply(zscore_normalization)
 
 
+print("============= Started: Band Pass filter .....==============")
 def band_pass_filter(l_freq: float, h_freq: float, eeg_data: np.ndarray) -> np.ndarray:
     """
     Apply band-pass filter using MNE's filter_data.
@@ -79,11 +62,16 @@ def band_pass_filter(l_freq: float, h_freq: float, eeg_data: np.ndarray) -> np.n
         h_freq=h_freq,
         verbose=False
     )
-X_train["epoch_data_bandpass"] = X_train["epoch_data_normalized"].apply(lambda x : band_pass_filter(l_freq=0.5, 
+eeg_data["epoch_data_bandpass"] = eeg_data["epoch_data_normalized"].apply(lambda x : band_pass_filter(l_freq=0.5, 
                                                                                                     h_freq=50, 
                                                                                                     eeg_data= x))
 
+print("============= Done: Band Pass filter .....==============")
 
+
+
+
+print("============= Started: Run ICA .....==============")
 INFO = mne.create_info(ch_names=CH_NAMES, sfreq=SFREQ, ch_types=CH_TYPES)
 
 def run_ica(eeg_data: np.ndarray, n_components: int = 64, method: str = "fastica", random_state: int = 97) -> np.ndarray:
@@ -129,26 +117,36 @@ def run_ica(eeg_data: np.ndarray, n_components: int = 64, method: str = "fastica
     raw_clean = raw.copy()
     ica.apply(raw_clean)
 
-    return raw_clean.get_data()
+    return raw_clean.get_data(), eog_inds
 
-
-def run_ica_safe(eeg_data: np.ndarray, n_components: int = 20):
+def run_ica_safe(eeg_data_ICA: np.ndarray, n_components: int = 20):
     try:
         # Fill NaNs first
-        eeg_data = np.nan_to_num(eeg_data, 0.0)
+        eeg_data_ICA = np.nan_to_num(eeg_data_ICA, 0.0)
         # Run ICA (reuse your previous function)
-        return run_ica(eeg_data, n_components=n_components)
+        return run_ica(eeg_data_ICA, n_components=n_components)
     except Exception as e:
         print(f"ICA failed for an epoch: {e}")
         # Return original EEG data if ICA fails
-        return "Error"
+        return "Error", "Error"
 
 # Apply with progress bar
-results = []
-for eeg_data in tqdm(X_train["epoch_data_bandpass"], desc="ICA robust"):
-    results.append(run_ica_safe(eeg_data))
+eeg_data_preprocessed, eog_inds = [], []
+for eeg_data_ICA in tqdm(eeg_data["epoch_data_bandpass"], desc="ICA robust"):
+    preprocessed_eeg_data, inds = run_ica_safe(eeg_data_ICA)
+    eeg_data_preprocessed.append(preprocessed_eeg_data)
+    eog_inds.append(inds)    
 
 
-X_train["epoch_data_ICA"] = results
+eeg_data["epoch_data_ICA"] = eeg_data_preprocessed
+eeg_data["epoch_data_ICA_inds"] = eog_inds
 
-X_train.to_pickle("../data/processed/eeg_processed_X_train.pkl")
+print("============= Done: Run ICA .....==============")
+
+# Creating a column just to identify the records that are bad
+eeg_data["factor"]=eeg_data["epoch_data_ICA"].apply(lambda  x : "str" if type(x) == str else "not_str")
+eeg_data = eeg_data[~(eeg_data["factor"] == "str")]
+
+# drop the column that was created 
+eeg_data.drop("factor", axis = 1, inplace = True)
+eeg_data.to_pickle("../data/processed/eeg_bandpass_ica.pkl")

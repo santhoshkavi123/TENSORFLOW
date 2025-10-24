@@ -1,0 +1,115 @@
+1 — Quick notes / setup (applies to all experiments)
+
+Feature format
+Assume for each band you have PSD shaped (n_samples, n_channels, n_freq_bins, n_windows).
+Typical feature collapse options:
+Integrate power across frequency bins → scalar band-power per window (band_power = sum(psd * df))
+Keep full spectral vector per window (rich but higher-D).
+Aggregate across windows (mean/std) or keep window sequence for temporal models.
+
+Preprocessing
+Standardize per-feature (z-score) using training set stats.
+Optionally apply log-transform to PSD (e.g., 10*log10) for stability.
+Handle class imbalance with weighting or resampling.
+
+Splits / Validation
+Use stratified splits if labels exist.
+For EEG, prefer leave-one-subject-out (LOSO) or group k-fold to measure generalization across subjects. If subjects aren't available, use repeated stratified k-fold.
+Fix random seeds and log versions of libraries.
+
+Metrics
+Classification: accuracy, balanced accuracy, F1, ROC AUC (macro/micro), confusion matrix.
+Regression: MAE, RMSE, R².
+Temporal detection: precision-recall over events, event-based F1.
+Report mean ± std over folds and run statistical tests (paired t-test / Wilcoxon) for comparisons.
+
+2 — Experiment list (prioritized) with procedures
+
+Experiment A — Baseline classical ML classification
+Goal: Establish a simple baseline using aggregated band-power features.
+
+Procedure:
+Compute per-window band power for each (sample, channel, band, window) → e.g., band_power shape (n_samples, n_channels, n_bands, n_windows).
+
+Aggregate across channels or keep channels as separate features:
+Option 1: average across channels → n_samples x n_bands x n_windows → further aggregate windows (mean/std) → final feature vector n_samples x (n_bands * 2).
+Option 2: keep per-channel features: flatten to n_samples x (n_channels * n_bands * stats_per_window).
+
+Train classical classifiers: Logistic Regression (L2), Random Forest, SVM (RBF), XGBoost.
+Cross-validate (stratified k-fold or LOSO).
+Evaluate: accuracy, balanced accuracy, F1; log confusion matrix.
+Analyze feature importances (RF, XGBoost, or coefficients).
+Expected outcome: Strong baseline; interpretable features (which band/channel matter).
+
+
+Experiment B — Temporal sequence modeling (CNN / RNN / Transformer)
+Goal: Leverage window sequence of band-power as a time series.
+Procedure:
+For each sample, create input shape (n_windows, n_channels * n_bands) or (n_windows, n_channels, n_bands).
+Models to try:
+1D-CNN over windows (temporal convs) → small kernels (3–5), pooling, global pooling + dense.
+LSTM / GRU (single or bi-directional).
+Transformer encoder over windows (positional encoding + feed-forward).
+Train with appropriate regularization: dropout, early stopping.
+Evaluate with LOSO if possible. Use window-level and sample-level predictions (aggregate window predictions by majority or averaging).
+Ablation: vary number of windows, window overlap.
+Metrics: same as classification; plus sequence-level accuracy.
+Experiment C — Channel selection & spatial experiments
+Goal: Find which channels or channel groups are informative.
+Procedure:
+Run baseline model with all channels.
+Channel ablation: iteratively remove one channel (or groups like frontal/occipital) and measure performance drop.
+Feature selection methods: recursive feature elimination, L1-regularized models, mutual information ranking.
+Visualize channel importances on a head map (if electrode positions known).
+Outcome: Reduced model complexity and insight into spatial pattern.
+Experiment D — Band ablation & importance
+Goal: Measure contribution of each frequency band.
+Procedure:
+Train model with all bands as baseline.
+For each band: remove it and retrain → record performance delta.
+Alternatively, train models per-band to see which bands alone carry predictive power.
+Outcome: Rank bands (delta/theta/alpha/etc.) by usefulness.
+Experiment E — Window size & overlap ablation
+Goal: Understand temporal resolution impact.
+Procedure:
+Try different window sizes (e.g., 10, 25, 50, 100 points) and overlaps (0%, 50%).
+For each setting, recompute PSD/welch and re-run baseline model.
+Plot performance vs window size.
+Outcome: Optimal tradeoff between temporal resolution and frequency resolution.
+Experiment F — Data augmentation and robustness
+Goal: Make models robust to noise/artifacts and small datasets.
+Procedure:
+Augmentations: additive Gaussian noise, channel dropout, time-shifts, frequency masking (band removal), mixup across trials.
+Train with and without augmentations; compare generalization to noisy test sets.
+Test robustness to simulated artifacts (e.g., eye-blink artifact injection).
+Metrics: degrade gracefully under noise; generalization gap shrink.
+Experiment G — Cross-subject generalization vs within-subject
+Goal: Compare performance when training across subjects vs personalized models.
+Procedure:
+Train global model using many subjects and evaluate on held-out subjects (LOSO).
+Train per-subject model (train/test split within single subject).
+Evaluate inference: can a small amount of subject-specific fine-tuning boost global model? (few-shot adaptation)
+Techniques: fine-tune last layer, domain-adversarial training, transfer learning.
+Outcome: Understand deployment viability and personalization gains.
+Experiment H — Unsupervised / clustering / representation learning
+Goal: Explore latent structure in PSD features.
+Procedure:
+Dimensionality reduction: PCA, t-SNE, UMAP on band-power features. Visualize clusters (by label if available).
+Clustering: KMeans, hierarchical clustering to see natural groupings.
+Self-supervised pretraining: contrastive loss (SimCLR-style) on windows, then fine-tune for classification.
+Outcome: Insights into class separability and potential pretraining improvements.
+Experiment I — End-to-end spectral CNN on raw EEG (comparison)
+Goal: Compare PSD-feature pipelines vs models that learn filters from raw signal.
+Procedure:
+Train shallow ConvNet on raw EEG (temporal filters that mimic bandpass). Example: EEGNet-style architecture.
+Evaluate vs PSD-based models on the same splits.
+Combine: use PSD features + learned features (concatenate representations) and evaluate fusion performance.
+Outcome: Measure whether handcrafted spectral features or learned filters work better for your task.
+Experiment J — Statistical testing & significance
+Goal: Verify if improvements are statistically meaningful.
+Procedure:
+For each model pair, collect per-fold performance vectors.
+Run paired statistical tests: paired t-test (if normal) or Wilcoxon signed-rank.
+Report p-values and effect sizes (Cohen’s d).
+Use confidence intervals on performance metrics.
+Outcome: Rigorous claims about improvements.

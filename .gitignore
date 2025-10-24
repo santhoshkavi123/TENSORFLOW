@@ -2,5 +2,6 @@
 MLLimbEEG/data/*
 PhysicoNet/data/*
 MLLimbEEG/eeg_processed/*
+PhysicoNet/parametric_tsne/*
 Visual_Question_Answering_ResearchFellow/data/*
 Visual_Question_Answering_ResearchFellow/artifacts/*

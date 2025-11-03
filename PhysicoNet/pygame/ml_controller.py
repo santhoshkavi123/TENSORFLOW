@@ -12,4 +12,4 @@ for command in ml_predictions:
 print("Starting crane simulator...")
 main()
 
-print("Simulator closed")
+print("Simulator close")

@@ -6,4 +6,3 @@ seaborn
 mne
 scikit-learn
 pyedflib
-seaborn
